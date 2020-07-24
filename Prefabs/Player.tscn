@@ -1,0 +1,831 @@
+[gd_scene load_steps=70 format=2]
+
+[ext_resource path="res://Worlds/CowboyAnimations.png" type="Texture" id=1]
+[ext_resource path="res://Textures/CrosshairTest.png" type="Texture" id=2]
+[ext_resource path="res://Crosshair.gd" type="Script" id=3]
+
+[sub_resource type="GDScript" id=1]
+script/source = "extends KinematicBody2D
+
+#An enum - essentially a new data type of only the options in curly brackets.
+enum {
+	MOVE,
+	SNIPE,
+	MOVESHOOT
+}
+
+#Export means editable outside of code so quite useful when you need to change
+#something quickly
+
+#Constants but can't be made constant with export so just constant in practice
+export var ACCELERATION = 500
+export var MAX_SPEED = 80
+export var FRICTION = 500
+
+#Exports relating to shooty guns
+export var bullet_speed = 400
+export var fire_rate_snipe = 1
+export var fire_rate_hip = 0.4
+export var bullet_spread_hipfire = 20
+export var bullet_spread_snipe =  1
+export var bullet_spread_hipfire_move = 45
+
+#Other global variables
+var velocity = Vector2.ZERO
+var ADS = false
+var weaponOut = false
+var bullet = preload(\"res://Prefabs/Bullet.tscn\")
+var can_fire = true
+var state = MOVE
+
+#Variables that need to be initialized only when everything is ready
+onready var animationPlayer = $AnimationPlayer
+onready var animationTree = $AnimationTree
+onready var animationState = animationTree.get(\"parameters/playback\")
+
+#Returns a Vector2 of magnitude 1 that represents the direction of the mouse
+#relative to player character
+func get_facing_direction_vector():
+	var facing_direction_vector = Vector2.ZERO
+	var mouse_pos = get_global_mouse_position()
+	var player_pos = $Center.get_global_position()
+	facing_direction_vector.x = mouse_pos.x - player_pos.x
+	facing_direction_vector.y = mouse_pos.y - player_pos.y
+	facing_direction_vector = facing_direction_vector.normalized()
+	return facing_direction_vector
+	
+	
+#Is called when state = MOVESHOOT - essentially shooting mechanism
+#Is essentially automatic fire - rate can be controlled by fire_rate variable
+func hipfire():
+	if Input.is_action_pressed(\"fire\") and can_fire:
+		var bullet_angle_change = deg2rad(rand_range(-(bullet_spread_hipfire / 2), (bullet_spread_hipfire / 2)))
+		var bullet_instance = bullet.instance()
+		bullet_instance.position = $Crosshair/BulletSpawn.get_global_position()
+		bullet_instance.rotation = $Crosshair.rotation - (PI / 2) + bullet_angle_change
+		bullet_instance.apply_impulse(Vector2(), Vector2(bullet_speed, 0).rotated($Crosshair.rotation - PI / 2 + bullet_angle_change))
+		get_tree().get_root().add_child(bullet_instance)
+		can_fire = false
+		yield(get_tree().create_timer(fire_rate_hip), \"timeout\")
+		can_fire = true
+		
+func hipfire_move():
+	if Input.is_action_pressed(\"fire\") and can_fire:
+		var bullet_angle_change = deg2rad(rand_range(-(bullet_spread_hipfire_move / 2), (bullet_spread_hipfire_move / 2)))
+		var bullet_instance = bullet.instance()
+		bullet_instance.position = $Crosshair/BulletSpawn.get_global_position()
+		bullet_instance.rotation = $Crosshair.rotation - (PI / 2) + bullet_angle_change
+		bullet_instance.apply_impulse(Vector2(), Vector2(bullet_speed, 0).rotated($Crosshair.rotation - PI / 2 + bullet_angle_change))
+		get_tree().get_root().add_child(bullet_instance)
+		can_fire = false
+		yield(get_tree().create_timer(fire_rate_hip), \"timeout\")
+		can_fire = true
+		
+func snipe():
+	if Input.is_action_just_pressed(\"fire\") and can_fire:
+		var bullet_angle_change = deg2rad(rand_range(-(bullet_spread_snipe / 2), (bullet_spread_snipe / 2)))
+		var bullet_instance = bullet.instance()
+		bullet_instance.position = $Crosshair/BulletSpawn.get_global_position()
+		bullet_instance.rotation = $Crosshair.rotation - (PI / 2) + bullet_angle_change
+		bullet_instance.apply_impulse(Vector2(), Vector2(bullet_speed, 0).rotated($Crosshair.rotation - PI / 2 + bullet_angle_change))
+		get_tree().get_root().add_child(bullet_instance)
+		can_fire = false
+		yield(get_tree().create_timer(fire_rate_snipe), \"timeout\")
+		can_fire = true
+
+#Anything that needs to be set when application is launched
+func _ready():
+	$Crosshair.frame = 0
+	animationTree.active = true
+
+#Will call appropriate state function 60 times a frame
+func _physics_process(delta):
+	match state:
+		MOVE:
+			move_state(delta)
+		SNIPE:
+			snipe_state(delta)
+		MOVESHOOT:
+			moveshoot_state(delta)
+
+#MOVE STATE - does movement and idle when you don't have gun equiped
+func move_state(delta):
+	var input_vector = Vector2.ZERO
+	input_vector.x = Input.get_action_strength(\"ui_right\") - Input.get_action_strength(\"ui_left\")
+	input_vector.y = Input.get_action_strength(\"ui_down\") - Input.get_action_strength(\"ui_up\")
+	input_vector = input_vector.normalized()
+	
+	if input_vector != Vector2.ZERO:
+		animationTree.set(\"parameters/Idle/blend_position\", input_vector)
+		animationTree.set(\"parameters/Move/blend_position\", input_vector)
+		animationState.travel(\"Move\")
+		velocity = velocity.move_toward(input_vector * MAX_SPEED, ACCELERATION * delta)
+	else:
+		animationState.travel(\"Idle\")
+		velocity = velocity.move_toward(Vector2.ZERO, FRICTION * delta)
+		
+	velocity = move_and_slide(velocity)
+
+#SNIPE STATE - when you have gun equipped and in ADS - can't move in this state
+func snipe_state(_delta):
+	animationState.travel(\"IdleShoot\")
+	animationTree.set(\"parameters/IdleShoot/blend_position\", get_facing_direction_vector())
+	animationTree.set(\"parameters/Idle/blend_position\", get_facing_direction_vector())
+	
+	snipe()
+	
+
+#MOVESHOOT STATE - when you have gun equiped and not in ADS
+#This does idle and movement
+func moveshoot_state(delta):
+	var facing_direction_vector = get_facing_direction_vector()
+	
+	var input_vector = Vector2.ZERO
+	var anim_input_vector = Vector2.ZERO
+	input_vector.x = Input.get_action_strength(\"ui_right\") - Input.get_action_strength(\"ui_left\")
+	input_vector.y = Input.get_action_strength(\"ui_down\") - Input.get_action_strength(\"ui_up\")
+	input_vector = input_vector.normalized()
+	
+	if input_vector != Vector2.ZERO:
+		animationTree.set(\"parameters/Idle/blend_position\", facing_direction_vector)
+		animationState.travel(\"MoveShoot\")
+		velocity = velocity.move_toward(input_vector * MAX_SPEED, ACCELERATION * delta)
+		hipfire_move()
+	elif input_vector == Vector2.ZERO:
+		animationTree.set(\"parameters/IdleShoot/blend_position\", facing_direction_vector)
+		animationState.travel(\"IdleShoot\")
+		velocity = velocity.move_toward(Vector2.ZERO, FRICTION * delta)
+		hipfire()
+	
+	if input_vector.y != 0 and input_vector.x != 0:
+		anim_input_vector.x = input_vector.x
+		animationTree.set(\"parameters/MoveShoot/blend_position\", (anim_input_vector * 2) + facing_direction_vector)
+	elif input_vector.y == 0 and input_vector.x != 0:
+		animationTree.set(\"parameters/MoveShoot/blend_position\", (input_vector * 2) + facing_direction_vector)
+	elif input_vector.y != 0 and input_vector.x == 0:
+		animationTree.set(\"parameters/MoveShoot/blend_position\", (input_vector * 2) + facing_direction_vector)
+		
+	velocity = move_and_slide(velocity)
+
+#Specific keybinds and events and stuff - don't belong anywhere else
+func _input(event):
+	if event.is_action_pressed(\"holster_weapon\"):
+		if weaponOut == false:
+			$Crosshair.show()
+			$Crosshair.frame = 1
+			weaponOut = true
+			state = MOVESHOOT
+		elif weaponOut:
+			$Crosshair.hide()
+			weaponOut = false
+			state = MOVE
+			
+	if event.is_action_pressed(\"RMBpress\"):
+		if weaponOut:
+			ADS = true
+			while $Crosshair.frame < 4 and ADS == true:
+				$Crosshair.frame += 1
+				yield(get_tree().create_timer(0.05), \"timeout\")
+			state = SNIPE
+		
+	if event.is_action_released(\"RMBpress\"):
+		if weaponOut:
+			ADS = false
+			while $Crosshair.frame > 0 and ADS == false:
+				$Crosshair.frame -= 1
+				yield(get_tree().create_timer(0.05), \"timeout\")
+			state = MOVESHOOT
+"
+
+[sub_resource type="Animation" id=2]
+resource_name = "CrosshairZoomIn"
+length = 0.25
+step = 0.05
+tracks/0/type = "value"
+tracks/0/path = NodePath("Crosshair:frame")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/keys = {
+"times": PoolRealArray( 0, 0.05, 0.1, 0.15, 0.2 ),
+"transitions": PoolRealArray( 1, 1, 1, 1, 1 ),
+"update": 1,
+"values": [ 0, 1, 2, 3, 4 ]
+}
+
+[sub_resource type="Animation" id=3]
+resource_name = "CrosshairZoomOut"
+length = 0.25
+step = 0.05
+tracks/0/type = "value"
+tracks/0/path = NodePath("Crosshair:frame")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/keys = {
+"times": PoolRealArray( 0, 0.05, 0.1, 0.15, 0.2 ),
+"transitions": PoolRealArray( 1, 1, 1, 1, 1 ),
+"update": 1,
+"values": [ 4, 3, 2, 1, 0 ]
+}
+
+[sub_resource type="Animation" id=4]
+resource_name = "IdleDown"
+length = 0.6
+loop = true
+tracks/0/type = "value"
+tracks/0/path = NodePath("Body:frame")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/keys = {
+"times": PoolRealArray( 0, 0.1, 0.2, 0.3, 0.4, 0.5 ),
+"transitions": PoolRealArray( 1, 1, 1, 1, 1, 1 ),
+"update": 1,
+"values": [ 0, 1, 2, 3, 4, 5 ]
+}
+
+[sub_resource type="Animation" id=5]
+resource_name = "IdleLeft"
+length = 0.6
+loop = true
+tracks/0/type = "value"
+tracks/0/path = NodePath("Body:frame")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/keys = {
+"times": PoolRealArray( 0, 0.1, 0.2, 0.3, 0.4, 0.5 ),
+"transitions": PoolRealArray( 1, 1, 1, 1, 1, 1 ),
+"update": 1,
+"values": [ 12, 13, 14, 15, 16, 17 ]
+}
+
+[sub_resource type="Animation" id=6]
+resource_name = "IdleRight"
+length = 0.6
+loop = true
+tracks/0/type = "value"
+tracks/0/path = NodePath("Body:frame")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/keys = {
+"times": PoolRealArray( 0, 0.1, 0.2, 0.3, 0.4, 0.5 ),
+"transitions": PoolRealArray( 1, 1, 1, 1, 1, 1 ),
+"update": 1,
+"values": [ 6, 7, 8, 9, 10, 11 ]
+}
+
+[sub_resource type="Animation" id=7]
+resource_name = "IdleUp"
+length = 0.6
+loop = true
+tracks/0/type = "value"
+tracks/0/path = NodePath("Body:frame")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/keys = {
+"times": PoolRealArray( 0, 0.1, 0.2, 0.3, 0.4, 0.5 ),
+"transitions": PoolRealArray( 1, 1, 1, 1, 1, 1 ),
+"update": 1,
+"values": [ 18, 19, 20, 21, 22, 23 ]
+}
+
+[sub_resource type="Animation" id=8]
+resource_name = "MoveDown"
+length = 0.6
+loop = true
+tracks/0/type = "value"
+tracks/0/path = NodePath("Body:frame")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/keys = {
+"times": PoolRealArray( 0, 0.1, 0.2, 0.3, 0.4, 0.5 ),
+"transitions": PoolRealArray( 1, 1, 1, 1, 1, 1 ),
+"update": 1,
+"values": [ 25, 26, 27, 28, 29, 24 ]
+}
+
+[sub_resource type="Animation" id=9]
+resource_name = "MoveDownLookLeft"
+length = 0.6
+loop = true
+tracks/0/type = "value"
+tracks/0/path = NodePath("Body:frame")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/keys = {
+"times": PoolRealArray( 0, 0.1, 0.2, 0.3, 0.4, 0.5 ),
+"transitions": PoolRealArray( 1, 1, 1, 1, 1, 1 ),
+"update": 1,
+"values": [ 121, 122, 123, 124, 125, 120 ]
+}
+
+[sub_resource type="Animation" id=10]
+resource_name = "MoveDownLookRight"
+length = 0.6
+loop = true
+tracks/0/type = "value"
+tracks/0/path = NodePath("Body:frame")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/keys = {
+"times": PoolRealArray( 0, 0.1, 0.2, 0.3, 0.4, 0.5 ),
+"transitions": PoolRealArray( 1, 1, 1, 1, 1, 1 ),
+"update": 1,
+"values": [ 73, 74, 75, 76, 77, 72 ]
+}
+
+[sub_resource type="Animation" id=11]
+resource_name = "MoveDownLookUp"
+length = 0.6
+loop = true
+tracks/0/type = "value"
+tracks/0/path = NodePath("Body:frame")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/keys = {
+"times": PoolRealArray( 0, 0.1, 0.2, 0.3, 0.4, 0.5 ),
+"transitions": PoolRealArray( 1, 1, 1, 1, 1, 1 ),
+"update": 1,
+"values": [ 47, 46, 45, 44, 43, 42 ]
+}
+
+[sub_resource type="Animation" id=12]
+length = 0.6
+loop = true
+tracks/0/type = "value"
+tracks/0/path = NodePath("Body:frame")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/keys = {
+"times": PoolRealArray( 0, 0.1, 0.2, 0.3, 0.4, 0.5 ),
+"transitions": PoolRealArray( 1, 1, 1, 1, 1, 1 ),
+"update": 1,
+"values": [ 37, 38, 39, 40, 41, 36 ]
+}
+
+[sub_resource type="Animation" id=13]
+resource_name = "MoveLeftLookDown"
+length = 0.6
+loop = true
+tracks/0/type = "value"
+tracks/0/path = NodePath("Body:frame")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/keys = {
+"times": PoolRealArray( 0, 0.1, 0.2, 0.3, 0.4, 0.5 ),
+"transitions": PoolRealArray( 1, 1, 1, 1, 1, 1 ),
+"update": 1,
+"values": [ 133, 134, 135, 136, 137, 132 ]
+}
+
+[sub_resource type="Animation" id=14]
+length = 0.6
+loop = true
+tracks/0/type = "value"
+tracks/0/path = NodePath("Body:frame")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/keys = {
+"times": PoolRealArray( 0, 0.1, 0.2, 0.3, 0.4, 0.5 ),
+"transitions": PoolRealArray( 1, 1, 1, 1, 1, 1 ),
+"update": 1,
+"values": [ 35, 34, 33, 32, 31, 30 ]
+}
+
+[sub_resource type="Animation" id=15]
+resource_name = "MoveLeftLookUp"
+length = 0.6
+loop = true
+tracks/0/type = "value"
+tracks/0/path = NodePath("Body:frame")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/keys = {
+"times": PoolRealArray( 0, 0.1, 0.2, 0.3, 0.4, 0.5 ),
+"transitions": PoolRealArray( 1, 1, 1, 1, 1, 1 ),
+"update": 1,
+"values": [ 85, 86, 87, 88, 89, 84 ]
+}
+
+[sub_resource type="Animation" id=16]
+length = 0.6
+loop = true
+tracks/0/type = "value"
+tracks/0/path = NodePath("Body:frame")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/keys = {
+"times": PoolRealArray( 0, 0.1, 0.2, 0.3, 0.4, 0.5 ),
+"transitions": PoolRealArray( 1, 1, 1, 1, 1, 1 ),
+"update": 1,
+"values": [ 31, 32, 33, 34, 35, 30 ]
+}
+
+[sub_resource type="Animation" id=17]
+resource_name = "MoveRightLookDown"
+length = 0.6
+loop = true
+tracks/0/type = "value"
+tracks/0/path = NodePath("Body:frame")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/keys = {
+"times": PoolRealArray( 0, 0.1, 0.2, 0.3, 0.4, 0.5 ),
+"transitions": PoolRealArray( 1, 1, 1, 1, 1, 1 ),
+"update": 1,
+"values": [ 79, 80, 81, 82, 83, 78 ]
+}
+
+[sub_resource type="Animation" id=18]
+length = 0.6
+loop = true
+tracks/0/type = "value"
+tracks/0/path = NodePath("Body:frame")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/keys = {
+"times": PoolRealArray( 0, 0.1, 0.2, 0.3, 0.4, 0.5 ),
+"transitions": PoolRealArray( 1, 1, 1, 1, 1, 1 ),
+"update": 1,
+"values": [ 41, 40, 39, 38, 37, 36 ]
+}
+
+[sub_resource type="Animation" id=19]
+resource_name = "MoveRightLookUp"
+length = 0.6
+loop = true
+tracks/0/type = "value"
+tracks/0/path = NodePath("Body:frame")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/keys = {
+"times": PoolRealArray( 0, 0.1, 0.2, 0.3, 0.4, 0.5 ),
+"transitions": PoolRealArray( 1, 1, 1, 1, 1, 1 ),
+"update": 1,
+"values": [ 127, 128, 129, 130, 131, 126 ]
+}
+
+[sub_resource type="Animation" id=20]
+length = 0.6
+loop = true
+tracks/0/type = "value"
+tracks/0/path = NodePath("Body:frame")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/keys = {
+"times": PoolRealArray( 0, 0.1, 0.2, 0.3, 0.4, 0.5 ),
+"transitions": PoolRealArray( 1, 1, 1, 1, 1, 1 ),
+"update": 1,
+"values": [ 43, 44, 45, 46, 47, 42 ]
+}
+
+[sub_resource type="Animation" id=21]
+length = 0.6
+loop = true
+tracks/0/type = "value"
+tracks/0/path = NodePath("Body:frame")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/keys = {
+"times": PoolRealArray( 0, 0.1, 0.2, 0.3, 0.4, 0.5 ),
+"transitions": PoolRealArray( 1, 1, 1, 1, 1, 1 ),
+"update": 1,
+"values": [ 29, 28, 27, 26, 25, 24 ]
+}
+
+[sub_resource type="Animation" id=22]
+resource_name = "MoveUpLookLeft"
+length = 0.6
+loop = true
+tracks/0/type = "value"
+tracks/0/path = NodePath("Body:frame")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/keys = {
+"times": PoolRealArray( 0, 0.1, 0.2, 0.3, 0.4, 0.5 ),
+"transitions": PoolRealArray( 1, 1, 1, 1, 1, 1 ),
+"update": 1,
+"values": [ 139, 140, 141, 142, 143, 138 ]
+}
+
+[sub_resource type="Animation" id=23]
+resource_name = "MoveUpLookRight"
+length = 0.6
+loop = true
+tracks/0/type = "value"
+tracks/0/path = NodePath("Body:frame")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/keys = {
+"times": PoolRealArray( 0, 0.1, 0.2, 0.3, 0.4, 0.5 ),
+"transitions": PoolRealArray( 1, 1, 1, 1, 1, 1 ),
+"update": 1,
+"values": [ 91, 92, 93, 94, 95, 90 ]
+}
+
+[sub_resource type="AnimationNodeAnimation" id=24]
+animation = "IdleDown"
+
+[sub_resource type="AnimationNodeAnimation" id=25]
+animation = "IdleUp"
+
+[sub_resource type="AnimationNodeAnimation" id=26]
+animation = "IdleRight"
+
+[sub_resource type="AnimationNodeAnimation" id=27]
+animation = "IdleLeft"
+
+[sub_resource type="AnimationNodeBlendSpace2D" id=28]
+blend_point_0/node = SubResource( 24 )
+blend_point_0/pos = Vector2( 0, 1.1 )
+blend_point_1/node = SubResource( 25 )
+blend_point_1/pos = Vector2( 0, -1.1 )
+blend_point_2/node = SubResource( 26 )
+blend_point_2/pos = Vector2( 1, 0 )
+blend_point_3/node = SubResource( 27 )
+blend_point_3/pos = Vector2( -1, 0 )
+min_space = Vector2( -1, -1.1 )
+max_space = Vector2( 1, 1.1 )
+blend_mode = 1
+
+[sub_resource type="AnimationNodeAnimation" id=29]
+animation = "IdleDown"
+
+[sub_resource type="AnimationNodeAnimation" id=30]
+animation = "IdleRight"
+
+[sub_resource type="AnimationNodeAnimation" id=31]
+animation = "IdleLeft"
+
+[sub_resource type="AnimationNodeAnimation" id=32]
+animation = "IdleUp"
+
+[sub_resource type="AnimationNodeBlendSpace2D" id=33]
+blend_point_0/node = SubResource( 29 )
+blend_point_0/pos = Vector2( 0, 1 )
+blend_point_1/node = SubResource( 30 )
+blend_point_1/pos = Vector2( 1, 0 )
+blend_point_2/node = SubResource( 31 )
+blend_point_2/pos = Vector2( -1, 0 )
+blend_point_3/node = SubResource( 32 )
+blend_point_3/pos = Vector2( 0, -1 )
+blend_mode = 1
+
+[sub_resource type="AnimationNodeAnimation" id=34]
+animation = "MoveLeft"
+
+[sub_resource type="AnimationNodeAnimation" id=35]
+animation = "MoveDown"
+
+[sub_resource type="AnimationNodeAnimation" id=36]
+animation = "MoveUp"
+
+[sub_resource type="AnimationNodeAnimation" id=37]
+animation = "MoveRight"
+
+[sub_resource type="AnimationNodeBlendSpace2D" id=38]
+blend_point_0/node = SubResource( 34 )
+blend_point_0/pos = Vector2( -1, 0 )
+blend_point_1/node = SubResource( 35 )
+blend_point_1/pos = Vector2( 0, 1.1 )
+blend_point_2/node = SubResource( 36 )
+blend_point_2/pos = Vector2( 0, -1.1 )
+blend_point_3/node = SubResource( 37 )
+blend_point_3/pos = Vector2( 1, 0 )
+min_space = Vector2( -1, -1.1 )
+max_space = Vector2( 1, 1.1 )
+blend_mode = 1
+
+[sub_resource type="AnimationNodeAnimation" id=39]
+animation = "MoveLeft"
+
+[sub_resource type="AnimationNodeAnimation" id=40]
+animation = "MoveRight"
+
+[sub_resource type="AnimationNodeAnimation" id=42]
+animation = "MoveUpLookRight"
+
+[sub_resource type="AnimationNodeAnimation" id=63]
+animation = "MoveRightLookDown"
+
+[sub_resource type="AnimationNodeAnimation" id=64]
+animation = "MoveLeftLookRight"
+
+[sub_resource type="AnimationNodeAnimation" id=65]
+animation = "MoveLeftLookDown"
+
+[sub_resource type="AnimationNodeAnimation" id=66]
+animation = "MoveLeftLookUp"
+
+[sub_resource type="AnimationNodeAnimation" id=67]
+animation = "MoveRightLookUp"
+
+[sub_resource type="AnimationNodeAnimation" id=43]
+animation = "MoveDown"
+
+[sub_resource type="AnimationNodeAnimation" id=45]
+animation = "MoveRightLookLeft"
+
+[sub_resource type="AnimationNodeAnimation" id=46]
+animation = "MoveDownLookUp"
+
+[sub_resource type="AnimationNodeAnimation" id=47]
+animation = "MoveUp"
+
+[sub_resource type="AnimationNodeAnimation" id=48]
+animation = "MoveUpLookDown"
+
+[sub_resource type="AnimationNodeAnimation" id=49]
+animation = "MoveDownLookLeft"
+
+[sub_resource type="AnimationNodeAnimation" id=50]
+animation = "MoveDownLookRight"
+
+[sub_resource type="AnimationNodeAnimation" id=41]
+animation = "MoveUpLookLeft"
+
+[sub_resource type="AnimationNodeBlendSpace2D" id=51]
+blend_point_0/node = SubResource( 39 )
+blend_point_0/pos = Vector2( -3, 0 )
+blend_point_1/node = SubResource( 40 )
+blend_point_1/pos = Vector2( 3, 0 )
+blend_point_2/node = SubResource( 43 )
+blend_point_2/pos = Vector2( 0, 3.1 )
+blend_point_3/node = SubResource( 45 )
+blend_point_3/pos = Vector2( 1, 0 )
+blend_point_4/node = SubResource( 46 )
+blend_point_4/pos = Vector2( 0, 1.1 )
+blend_point_5/node = SubResource( 47 )
+blend_point_5/pos = Vector2( 0, -3.1 )
+blend_point_6/node = SubResource( 48 )
+blend_point_6/pos = Vector2( 0, -1.1 )
+blend_point_7/node = SubResource( 49 )
+blend_point_7/pos = Vector2( -1, 2.1 )
+blend_point_8/node = SubResource( 50 )
+blend_point_8/pos = Vector2( 1, 2.1 )
+blend_point_9/node = SubResource( 41 )
+blend_point_9/pos = Vector2( -1, -2.1 )
+blend_point_10/node = SubResource( 42 )
+blend_point_10/pos = Vector2( 1, -2.1 )
+blend_point_11/node = SubResource( 63 )
+blend_point_11/pos = Vector2( 2, 1.1 )
+blend_point_12/node = SubResource( 64 )
+blend_point_12/pos = Vector2( -1, 0 )
+blend_point_13/node = SubResource( 65 )
+blend_point_13/pos = Vector2( -2, 1.1 )
+blend_point_14/node = SubResource( 66 )
+blend_point_14/pos = Vector2( -2, -1.1 )
+blend_point_15/node = SubResource( 67 )
+blend_point_15/pos = Vector2( 2, -1.1 )
+min_space = Vector2( -3, -3.1 )
+max_space = Vector2( 3, 3.1 )
+blend_mode = 1
+
+[sub_resource type="AnimationNodeStateMachineTransition" id=52]
+
+[sub_resource type="AnimationNodeStateMachineTransition" id=53]
+
+[sub_resource type="AnimationNodeStateMachineTransition" id=54]
+
+[sub_resource type="AnimationNodeStateMachineTransition" id=55]
+
+[sub_resource type="AnimationNodeStateMachineTransition" id=56]
+
+[sub_resource type="AnimationNodeStateMachineTransition" id=57]
+
+[sub_resource type="AnimationNodeStateMachineTransition" id=58]
+
+[sub_resource type="AnimationNodeStateMachineTransition" id=59]
+
+[sub_resource type="AnimationNodeStateMachine" id=60]
+states/Idle/node = SubResource( 28 )
+states/Idle/position = Vector2( 216, 113 )
+states/IdleShoot/node = SubResource( 33 )
+states/IdleShoot/position = Vector2( 216, 230 )
+states/Move/node = SubResource( 38 )
+states/Move/position = Vector2( 446, 113 )
+states/MoveShoot/node = SubResource( 51 )
+states/MoveShoot/position = Vector2( 446, 230 )
+transitions = [ "Idle", "Move", SubResource( 52 ), "Move", "Idle", SubResource( 53 ), "Idle", "IdleShoot", SubResource( 54 ), "IdleShoot", "Idle", SubResource( 55 ), "IdleShoot", "MoveShoot", SubResource( 56 ), "MoveShoot", "IdleShoot", SubResource( 57 ), "MoveShoot", "Move", SubResource( 58 ), "Move", "MoveShoot", SubResource( 59 ) ]
+start_node = "Idle"
+graph_offset = Vector2( 22.3095, 64.8586 )
+
+[sub_resource type="AnimationNodeStateMachinePlayback" id=61]
+
+[sub_resource type="CapsuleShape2D" id=62]
+radius = 4.00002
+height = 3.99997
+
+[node name="Player" type="KinematicBody2D" groups=[
+"player",
+]]
+position = Vector2( 0, -0.31498 )
+z_index = 1
+collision_mask = 0
+script = SubResource( 1 )
+__meta__ = {
+"_edit_group_": true
+}
+bullet_speed = 200
+
+[node name="Center" type="Node2D" parent="."]
+position = Vector2( 0, -14 )
+
+[node name="AnimationPlayer" type="AnimationPlayer" parent="."]
+anims/CrosshairZoomIn = SubResource( 2 )
+anims/CrosshairZoomOut = SubResource( 3 )
+anims/IdleDown = SubResource( 4 )
+anims/IdleLeft = SubResource( 5 )
+anims/IdleRight = SubResource( 6 )
+anims/IdleUp = SubResource( 7 )
+anims/MoveDown = SubResource( 8 )
+anims/MoveDownLookLeft = SubResource( 9 )
+anims/MoveDownLookRight = SubResource( 10 )
+anims/MoveDownLookUp = SubResource( 11 )
+anims/MoveLeft = SubResource( 12 )
+anims/MoveLeftLookDown = SubResource( 13 )
+anims/MoveLeftLookRight = SubResource( 14 )
+anims/MoveLeftLookUp = SubResource( 15 )
+anims/MoveRight = SubResource( 16 )
+anims/MoveRightLookDown = SubResource( 17 )
+anims/MoveRightLookLeft = SubResource( 18 )
+anims/MoveRightLookUp = SubResource( 19 )
+anims/MoveUp = SubResource( 20 )
+anims/MoveUpLookDown = SubResource( 21 )
+anims/MoveUpLookLeft = SubResource( 22 )
+anims/MoveUpLookRight = SubResource( 23 )
+
+[node name="AnimationTree" type="AnimationTree" parent="."]
+tree_root = SubResource( 60 )
+anim_player = NodePath("../AnimationPlayer")
+parameters/playback = SubResource( 61 )
+parameters/Idle/blend_position = Vector2( 0, 0 )
+parameters/IdleShoot/blend_position = Vector2( 0, 0 )
+parameters/Move/blend_position = Vector2( 0, 0 )
+parameters/MoveShoot/blend_position = Vector2( 0, 0 )
+
+[node name="FootColliisionShape" type="CollisionShape2D" parent="."]
+position = Vector2( 0, 0.314981 )
+rotation = -1.5708
+shape = SubResource( 62 )
+
+[node name="Crosshair" type="Sprite" parent="."]
+position = Vector2( 0, -14 )
+rotation = 1.5708
+texture = ExtResource( 2 )
+offset = Vector2( 0, -24 )
+hframes = 5
+frame = 4
+script = ExtResource( 3 )
+
+[node name="BulletSpawn" type="Node2D" parent="Crosshair"]
+position = Vector2( -6.19888e-05, -17 )
+
+[node name="Body" type="Sprite" parent="."]
+position = Vector2( 0, -13.685 )
+texture = ExtResource( 1 )
+vframes = 3
+hframes = 48
+frame = 78

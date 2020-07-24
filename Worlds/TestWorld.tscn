@@ -1,0 +1,53 @@
+[gd_scene load_steps=5 format=2]
+
+[ext_resource path="res://Prefabs/Player.tscn" type="PackedScene" id=1]
+[ext_resource path="res://Prefabs/Cactus.tscn" type="PackedScene" id=2]
+[ext_resource path="res://Prefabs/Barrel.tscn" type="PackedScene" id=3]
+[ext_resource path="res://Textures/SandyBackground.png" type="Texture" id=4]
+
+[node name="TestWorld" type="Node2D"]
+__meta__ = {
+"_edit_lock_": true
+}
+
+[node name="Sprite" type="Sprite" parent="."]
+texture = ExtResource( 4 )
+centered = false
+region_enabled = true
+region_rect = Rect2( 0, 0, 320, 180 )
+
+[node name="Camera2D" type="Camera2D" parent="."]
+position = Vector2( 160, 90 )
+current = true
+smoothing_speed = 10.0
+
+[node name="YSort" type="YSort" parent="."]
+position = Vector2( 160, 90 )
+
+[node name="Player" parent="YSort" instance=ExtResource( 1 )]
+position = Vector2( 0, 0 )
+z_index = 0
+
+[node name="RemoteTransform2D" type="RemoteTransform2D" parent="YSort/Player"]
+remote_path = NodePath("../../../Camera2D")
+
+[node name="Cactus" parent="YSort" instance=ExtResource( 2 )]
+position = Vector2( -72, 49 )
+
+[node name="Cactus1" parent="YSort" instance=ExtResource( 2 )]
+position = Vector2( -80.1324, -41.9848 )
+
+[node name="Cactus2" parent="YSort" instance=ExtResource( 2 )]
+position = Vector2( 6.89999, 46.73 )
+
+[node name="Cactus3" parent="YSort" instance=ExtResource( 2 )]
+position = Vector2( 84, -32 )
+
+[node name="Cactus4" parent="YSort" instance=ExtResource( 2 )]
+position = Vector2( -116, -65 )
+
+[node name="Cactus5" parent="YSort" instance=ExtResource( 2 )]
+position = Vector2( -120, -18 )
+
+[node name="Barrel" parent="YSort" instance=ExtResource( 3 )]
+position = Vector2( 9, -60 )
