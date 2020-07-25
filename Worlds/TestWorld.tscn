@@ -11,6 +11,7 @@ __meta__ = {
 }
 
 [node name="Sprite" type="Sprite" parent="."]
+z_index = -2
 texture = ExtResource( 4 )
 centered = false
 region_enabled = true
