@@ -39,6 +39,7 @@ var weaponOut = false
 var bullet = preload(\"res://Prefabs/Bullet.tscn\")
 var can_fire = true
 var state = MOVE
+var test = \"Hi there\"
 
 #Variables that need to be initialized only when everything is ready
 onready var animationPlayer = $AnimationPlayer
